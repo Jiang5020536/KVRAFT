@@ -3,7 +3,20 @@
 
 #include <cstring>      //memset
 #include <string>
+#include <mutex>
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <cstdlib>
+#include <boost/archive/text_oarchive.hpp>
+#include <boost/archive/text_iarchive.hpp>
+#include <boost/serialization/vector.hpp>
+#include <boost/serialization/string.hpp>
+#include <cmath>
 
+
+static std::string delimiter = ":";     //判断是否有效
+#define STORE_FILE "../../../store/dumpFile"
 
 template <typename K, typename V>
 class Node{
@@ -12,7 +25,7 @@ public:
     Node(K k, V v, int);
     ~Node();
     K get_key() const;
-    V get_val() const;
+    V get_value() const;
     void set_value(V);
     Node<K, V> **forward;  //xia yi ge yuansu baokuo xiayige cengji
     int node_level;
@@ -22,12 +35,35 @@ private:
 };
 
 template <typename K, typename V>
+class SkipListDump{
+public:
+    friend class boost::serialization::access;
+    
+    template<class Archive>
+    void serialize(Archive &ar, const unsigned int version){
+        ar &keyDumpVt_;
+        ar &valDumpVt_;
+    }
+    std::vector<K> keyDumpVt_;
+    std::vector<V> valDumpVt_;
+public:
+    void insert(const Node<K, V> &node);
+};
+
+template <typename K, typename V>
+void SkipListDump<K, V>::insert(const Node<K, V> &node){
+    keyDumpVt_.emplace_back(node.get_key());
+    valDumpVt_.emplace_back(node.get_value());
+    return;
+}
+
+template <typename K, typename V>
 Node<K, V>::Node(const K k, const V v, int level){
     this->key = k;
     this->value = v;
     this->node_level = level;
-    this->forward = new Node<K, V> [level + 1] //qian mian jige yuansu 
-    memset(this->forward, 0, sizeof(Node<K, V> *) * (level + 1);)       //neicun hanshu
+    this->forward = new Node<K, V> *[level + 1]; //qian mian jige yuansu 
+    memset(this->forward, 0, sizeof(Node<K, V> *) * (level + 1));       //neicun hanshu
 }
 
 template <typename K, typename V>
@@ -36,12 +72,12 @@ Node<K, V>::~Node(){
 }
 
 template <typename K, typename V>
-K Node<K, V>::get_key() const{
+K Node<K, V>::get_key() const{  
     return key;
 }
 
 template <typename K, typename V>
-V Node<K, V>::get_val() const{
+V Node<K, V>::get_value() const{
     return value;
 }
 
@@ -72,7 +108,7 @@ public:
 private:
     int _max_level;
     int _skip_list_level;
-    Node<K, V>* header;     //头结点
+    Node<K, V>* _header;     //头结点
 
     //file operator
     std::ofstream _file_writer;
@@ -92,7 +128,7 @@ template <typename K, typename V>
 int SkipList<K, V>::get_random_level(){
     int  k = 1;
     while(rand() % 2){
-        k++
+        k++;
     }
     k = (k <= _max_level) ? k : _max_level;
     return k;
@@ -101,7 +137,7 @@ int SkipList<K, V>::get_random_level(){
 
 template <typename K, typename V>
 Node<K, V> * SkipList<K, V>::create_node(K key, V value, int level){
-    Node<K, V>* tem = new Node(key, value, level);
+    Node<K, V>* tem = new Node<K, V>(key, value, level);
     return tem;
 }
 
@@ -145,27 +181,25 @@ void SkipList<K, V>::clear(Node<K, V> *cur) {
 
 template <typename K, typename V>
 int SkipList<K, V>::insert_element(const K key, const V value){
-
-
     _mtx.lock();
-    Node<K, V> *current = this->header;
+    Node<K, V> *current = this->_header;
     Node<K, V> *update[_max_level + 1];
     memset(update, 0, sizeof(Node<K, V> *) * (_max_level + 1));
     for(int i = _skip_list_level; i >= 0; i--){
-        while ((current->forward[i]!= NULL && current->forward[i]->get_key < key))
+        while ((current->forward[i]!= NULL && current->forward[i]->get_key() < key))
         {
             current = current->forward[i];
         }
         update[i] = current;
     }
     current = current->forward[0];
-    if(current != NULL ** current->get_key() == key){
+    if(current != NULL && current->get_key() == key){
         std::cout << "key: " << key << ", exist" << std::endl;
         _mtx.unlock();
         return 1;
     }
 
-    if(current == NULL || current->get_key != key){
+    if(current == NULL || current->get_key() != key){
         int random_level = get_random_level();          //这是一个重点
         if(random_level > _skip_list_level){
             for(int i = _skip_list_level + 1; i < random_level + 1; i++){
@@ -182,19 +216,20 @@ int SkipList<K, V>::insert_element(const K key, const V value){
         _element_count++;
     }
     _mtx.unlock();
+    return 1;
 }
 
 template <typename K, typename V>
 bool SkipList<K, V>::search_element(K key, V& value){
     std::cout << "search_element--------------------" << std::endl;
-    Node<K, V>* current = header;
+    Node<K, V>* current = _header;
     for (int i = _skip_list_level; i >= 0; i--) {
     while (current->forward[i] && current->forward[i]->get_key() < key) {
       current = current->forward[i];
     }
     current = current->forward[0];
     if(current && current->get_key() == key){
-        value = current->get_val();
+        value = current->get_value();
         std::cout << "Found key: " << key << ", value: " << current->get_value() << std::endl;
         return true; 
     }
@@ -216,7 +251,7 @@ void  SkipList<K, V>::delete_element(K key){
     }
     update[i] = current;
     }
-    if(current != NULL && current->get_key == key){
+    if(current != NULL && current->get_key() == key){
         for(int i = 0; i <= _skip_list_level; i++){
             if (update[i]->forward[i] != current) break;
             update[i]->forward[i] = current->forward[i];  //i就是层级
@@ -271,5 +306,68 @@ bool SkipList<K, V>::is_valid_string(const std::string &str) {
   return true;
 }
 
+template <typename K, typename V>
+void SkipList<K, V>::get_key_value_from_string(const std::string &str, std::string *key, std::string *value) {
+  if (!is_valid_string(str)) {
+    return;
+  }
+  *key = str.substr(0, str.find(delimiter));
+  *value = str.substr(str.find(delimiter) + 1, str.length());
+}
 
-#endif SKIPLIST_H
+template <typename K, typename V>
+std::string SkipList<K, V>::dump_file() {
+  std::cout << "dump_file-----------------" << std::endl;
+  _file_writer.open(STORE_FILE);
+  if (!_file_writer.is_open()) {
+    std::cerr << "无法打开文件 " << STORE_FILE << " 进行写入。" << std::endl;
+    return "";
+  }
+  Node<K, V> *node = this->_header->forward[0];
+  SkipListDump<K, V> dumper;
+  while (node != nullptr) {
+    dumper.insert(*node);
+    node = node->forward[0];
+  }
+  std::stringstream ss;
+  boost::archive::text_oarchive oa(ss);
+  oa << dumper;
+  _file_writer << ss.str();
+  _file_writer.close();
+  return ss.str();
+}
+
+template <typename K, typename V>
+void SkipList<K, V>::load_file(const std::string &dumpStr) {
+  // _file_reader.open(STORE_FILE);
+  std::cout << "load_file-----------------" << std::endl;
+  // std::string line;
+  // std::string* key = new std::string();
+  // std::string* value = new std::string();
+  // while (getline(_file_reader, line)) {
+  //     get_key_value_from_string(line, key, value);
+  //     if (key->empty() || value->empty()) {
+  //         continue;
+  //     }
+  //     // Define key as int type
+  //     insert_element(stoi(*key), *value);
+  //     std::cout << "key:" << *key << "value:" << *value << std::endl;
+  // }
+  // delete key;
+  // delete value;
+  // _file_reader.close();
+
+  if (dumpStr.empty()) {
+    return;
+  }
+  SkipListDump<K, V> dumper;
+  std::stringstream iss(dumpStr);
+  boost::archive::text_iarchive ia(iss);
+  ia >> dumper;
+  for (int i = 0; i < dumper.keyDumpVt_.size(); ++i) {
+    insert_element(dumper.keyDumpVt_[i], dumper.valDumpVt_[i]);
+  }
+}
+
+
+#endif
